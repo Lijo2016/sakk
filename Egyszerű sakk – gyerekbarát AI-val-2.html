@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8" />
+  <title>Egyszerű sakk – gyerekbarát AI-val</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-top: 20px;
+      background: #f4f4f4;
+    }
+    #board {
+      border: 4px solid #333;
+      display: grid;
+      grid-template-columns: repeat(8, 60px);
+      grid-template-rows: repeat(8, 60px);
+    }
+    .square {
+      width: 60px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 36px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .light { background: #f0d9b5; }
+    .dark { background: #b58863; }
+    .selected { outline: 3px solid yellow; }
+  </style>
+</head>
+<body>
+
+<h1>Egyszerű sakk – gyerekbarát gép ellen</h1>
+<div>Következik: <span id="turn">Fehér</span></div>
+<div id="board"></div>
+
+<button onclick="initBoard()">Új játék</button>
+<button onclick="showMoves()">Lépések megtekintése</button>
+
+<script>
+const PIECES = {
+  white: { K:"♔", Q:"♕", R:"♖", B:"♗", N:"♘", P:"♙" },
+  black: { K:"♚", Q:"♛", R:"♜", B:"♝", N:"♞", P:"♟" }
+};
+
+const VALUES = { P:1, N:3, B:3, R:5, Q:9, K:100 };
+let moveLog = [];
+
+let boardState = [];
+let selected = null;
+let currentTurn = "white";
+
+const boardEl = document.getElementById("board");
+const turnEl = document.getElementById("turn");
+
+function initBoard() {
+  boardState = Array.from({ length: 8 }, () => Array(8).fill(null));
+  moveLog = [];
+
+  boardState[0] = [
+    {color:"black",type:"R"},{color:"black",type:"N"},{color:"black",type:"B"},
+    {color:"black",type:"Q"},{color:"black",type:"K"},{color:"black",type:"B"},
+    {color:"black",type:"N"},{color:"black",type:"R"}
+  ];
+  for (let c=0;c<8;c++) boardState[1][c]={color:"black",type:"P"};
+
+  for (let c=0;c<8;c++) boardState[6][c]={color:"white",type:"P"};
+  boardState[7] = [
+    {color:"white",type:"R"},{color:"white",type:"N"},{color:"white",type:"B"},
+    {color:"white",type:"Q"},{color:"white",type:"K"},{color:"white",type:"B"},
+    {color:"white",type:"N"},{color:"white",type:"R"}
+  ];
+
+  currentTurn="white";
+  turnEl.textContent="Fehér";
+  selected=null;
+  renderBoard();
+}
+
+function renderBoard() {
+  boardEl.innerHTML="";
+  for (let r=0;r<8;r++){
+    for (let c=0;c<8;c++){
+      const sq=document.createElement("div");
+      sq.classList.add("square",(r+c)%2===0?"light":"dark");
+      sq.dataset.row=r; sq.dataset.col=c;
+
+      const p=boardState[r][c];
+      if (p) sq.textContent=PIECES[p.color][p.type];
+
+      if (selected && selected.row===r && selected.col===c)
+        sq.classList.add("selected");
+
+      sq.onclick=onSquareClick;
+      boardEl.appendChild(sq);
+    }
+  }
+}
+
+function onSquareClick(e){
+  if (currentTurn!=="white") return;
+
+  const row=parseInt(e.target.dataset.row);
+  const col=parseInt(e.target.dataset.col);
+  const piece=boardState[row][col];
+
+  if (!selected) {
+    if (piece && piece.color==="white") {
+      selected={row,col};
+      renderBoard();
+    }
+    return;
+  }
+
+  if (selected.row===row && selected.col===col) {
+    selected=null; renderBoard(); return;
+  }
+
+  const fromPiece=boardState[selected.row][selected.col];
+
+  if (!isLegalMove(fromPiece,selected.row,selected.col,row,col)) {
+    selected=null; renderBoard(); return;
+  }
+
+  recordMove("white", fromPiece.type, selected.row, selected.col, row, col);
+
+  boardState[row][col]=fromPiece;
+  boardState[selected.row][selected.col]=null;
+  selected=null;
+  switchTurn();
+  renderBoard();
+
+  setTimeout(aiMove,400);
+}
+
+function switchTurn(){
+  currentTurn=currentTurn==="white"?"black":"white";
+  turnEl.textContent=currentTurn==="white"?"Fehér":"Fekete";
+}
+
+function isPathClear(fr,fc,tr,tc){
+  const dr=Math.sign(tr-fr), dc=Math.sign(tc-fc);
+  let r=fr+dr, c=fc+dc;
+  while (r!==tr || c!==tc){
+    if (boardState[r][c]) return false;
+    r+=dr; c+=dc;
+  }
+  return true;
+}
+
+function isLegalMove(piece,fr,fc,tr,tc){
+  if (!piece) return false;
+  if (tr<0||tr>7||tc<0||tc>7) return false;
+  const target=boardState[tr][tc];
+  if (target && target.color===piece.color) return false;
+
+  const dr=tr-fr, dc=tc-fc;
+  const adr=Math.abs(dr), adc=Math.abs(dc);
+
+  switch(piece.type){
+    case "P": return pawnMove(piece,fr,fc,tr,tc,dr,dc,target);
+    case "R": return (dr===0||dc===0)&&isPathClear(fr,fc,tr,tc);
+    case "B": return adr===adc&&isPathClear(fr,fc,tr,tc);
+    case "Q": return ((dr===0||dc===0)||adr===adc)&&isPathClear(fr,fc,tr,tc);
+    case "N": return (adr===2&&adc===1)||(adr===1&&adc===2);
+    case "K": return adr<=1&&adc<=1;
+  }
+  return false;
+}
+
+function pawnMove(piece,fr,fc,tr,tc,dr,dc,target){
+  const dir=piece.color==="white"?-1:1;
+  const start=piece.color==="white"?6:1;
+
+  if (dc===0){
+    if (dr===dir && !target) return true;
+    if (fr===start && dr===2*dir && !target && !boardState[fr+dir][fc]) return true;
+    return false;
+  }
+
+  if (Math.abs(dc)===1 && dr===dir && target && target.color!==piece.color)
+    return true;
+
+  return false;
+}
+
+function aiMove(){
+  const moves=[];
+
+  for (let r=0;r<8;r++){
+    for (let c=0;c<8;c++){
+      const p=boardState[r][c];
+      if (p && p.color==="black"){
+        for (let rr=0;rr<8;rr++){
+          for (let cc=0;cc<8;cc++){
+            if (isLegalMove(p,r,c,rr,cc)){
+              const target=boardState[rr][cc];
+              const captureValue = target ? VALUES[target.type] : 0;
+              const score = captureValue*10;
+              moves.push({from:{r,c},to:{rr,cc},score});
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (moves.length===0){
+    alert("A fekete nem tud lépni.");
+    return;
+  }
+
+  let bestScore = Math.max(...moves.map(m=>m.score));
+  const bestMoves = moves.filter(m=>m.score===bestScore);
+  const m = bestMoves[Math.floor(Math.random()*bestMoves.length)];
+
+  recordMove("black", boardState[m.from.r][m.from.c].type, m.from.r, m.from.c, m.to.rr, m.to.cc);
+
+  boardState[m.to.rr][m.to.cc]=boardState[m.from.r][m.from.c];
+  boardState[m.from.r][m.from.c]=null;
+
+  switchTurn();
+  renderBoard();
+}
+
+function recordMove(color, piece, fromRow, fromCol, toRow, toCol) {
+  const cols = "abcdefgh";
+  const from = cols[fromCol] + (8 - fromRow);
+  const to = cols[toCol] + (8 - toRow);
+
+  const names = {
+    P: "Gyalog",
+    R: "Bástya",
+    N: "Huszár",
+    B: "Futó",
+    Q: "Vezér",
+    K: "Király"
+  };
+
+  moveLog.push(`${color === "white" ? "Fehér" : "Fekete"}: ${names[piece]} ${from} → ${to}`);
+}
+
+function showMoves() {
+  let text = "A játszma lépései:\n\n";
+  moveLog.forEach((m, i) => {
+    text += (i + 1) + ". " + m + "\n";
+  });
+  alert(text);
+}
+
+initBoard();
+</script>
+
+</body>
+</html>
